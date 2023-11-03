@@ -8,8 +8,8 @@ interface LeBabyRow {
     leftDuration: number,
     rightDuration: number,
     bottleVolume: number,
-    pee: boolean,
-    poo: boolean,
+    pee: string,
+    poo: string,
     sleepDuration: number,
     weight: number,
     height: number,
@@ -31,31 +31,81 @@ const formatTime = (time: string, timeZone: string) => {
     return date.toISOString()
 }
 
+const formatWeight = (weight: number) => {
+    const pounds = Math.floor(weight / 453.592)
+    const ounces = Math.floor((weight % 453.592) / 28.3495)
+    return `${pounds} lbs ${ounces} oz`
+}
+
+const formatLength = (length: number) => {
+    // Convert millimeters to inches, rounding to 1 decimal place. Ex: 533 mm = 21.0 in
+    const inches = Math.round(length * 0.0393701 * 10) / 10
+    return `${inches} in`
+}
+
 const convert = <T extends csv.ParserRow> (
     inStream: csv.CsvParserStream<T, any>,
     outFile: string,
     transform: (row: T) => any
-) => inStream.pipe(csv.format<T, any>({ headers: false }))
+) => inStream.pipe(csv.format<T, any>({ headers: true }))
         .transform((row: T) => transform(row))
         .pipe(fs.createWriteStream(outFile))
         .on('error', error => console.error(error))
         .on('end', () => console.log(`Parsed data to ${outFile}`));
 
 const extractDiaperRecords = (inStream: csv.CsvParserStream<LeBabyRow, any>, outDir: string) =>
-    convert(inStream, outDir + '/diaper.csv', (row: LeBabyRow) => ({
-        "Time": formatTime(row.time, row.timeZone),
-        "Kind": row.poo && row.pee ? "Mixed" : row.poo ? "Dirty" : "Wet",
-        "Notes": ""
-    }))
+    convert(inStream, outDir + '/diaper.csv', (row: LeBabyRow) => {
+        const isPee = row.pee == "1"
+        const isPoo = row.poo == "1"
+        if (!isPee && !isPoo) {
+            return null
+        }
+        return {
+            "Time": formatTime(row.time, row.timeZone),
+            "Kind": isPoo && isPee ? "Mixed" : isPoo ? "Dirty" : "Wet",
+            "Notes": ""
+        }
+    })
 
 const extractNursingRecords = (inStream: csv.CsvParserStream<LeBabyRow, any>, outDir: string) =>
-    convert(inStream, outDir + '/nursing.csv', (row: LeBabyRow) => ({
-        "Time": formatTime(row.time, row.timeZone),
-        "Left duration": formatDuration(row.leftDuration),
-        "Right duration": formatDuration(row.rightDuration),
-        "Starting side": "Unknown",
-        "Notes": ""
-    }))
+    convert(inStream, outDir + '/nursing.csv', (row: LeBabyRow) => {
+        if (row.leftDuration == 0 && row.rightDuration == 0) {
+            return null
+        }
+        return  {
+            "Time": formatTime(row.time, row.timeZone),
+            "Left duration": formatDuration(row.leftDuration),
+            "Right duration": formatDuration(row.rightDuration),
+            "Starting side": "Unknown",
+            "Notes": ""
+        }
+    })
+
+const extractWeightRecords = (inStream: csv.CsvParserStream<LeBabyRow, any>, outDir: string) =>
+    convert(inStream, outDir + '/weight.csv', (row: LeBabyRow) => {
+        if (!row.weight) {
+            return null
+        }
+        return {
+            "Time": formatTime(row.time, row.timeZone),
+            "Weight": formatWeight(row.weight),
+            "Percentile": "0%",
+            "Notes": ""
+        }
+    })
+
+const extractLengthRecords = (inStream: csv.CsvParserStream<LeBabyRow, any>, outDir: string) =>
+    convert(inStream, outDir + '/length.csv', (row: LeBabyRow) => {
+        if (!row.height) {
+            return null
+        }
+        return {
+            "Time": formatTime(row.time, row.timeZone),
+            "Length": formatLength(row.height),
+            "Percentile": "0%",
+            "Notes": ""
+        }
+    })
 
 yargs(Bun.argv.slice(2))
     .usage('Usage: $0 <command> [options]')
@@ -79,6 +129,8 @@ yargs(Bun.argv.slice(2))
 
         extractNursingRecords(data, outDir)
         extractDiaperRecords(data, outDir)
+        extractWeightRecords(data, outDir)
+        extractLengthRecords(data, outDir)
     })
     .help()
     .argv;
